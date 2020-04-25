@@ -54,15 +54,18 @@ var version string
 
 func main() {
 	var (
-		err error
-		v   vgrep
+		err        error
+		v          vgrep
+		searchWord string
 	)
 
 	// Unknown flags will be ignored and stored in args to further pass them
 	// to (git) grep.
 	parser := flags.NewParser(&v, flags.Default|flags.IgnoreUnknown)
 	args, err := parser.ParseArgs(os.Args[1:])
-	searchWord := args[0]
+	if len(args) > 0 {
+		searchWord = args[0]
+	}
 
 	if err != nil {
 		os.Exit(1)
@@ -636,38 +639,37 @@ func (v *vgrep) commandPrintMatches(indices []int, searchWord string) bool {
 		return false
 	}
 
-	//if !v.NoHeader {
-	//	toPrint = append(toPrint, []string{"Index", "File", "Line", "Content"})
-	//}
+	const SIZE = 5
 
 	toPrint = v.createPrintMessages(indices, searchWord)
 
 	prompt := promptui.Select{
-		Label: "Search Results",
-		Items: toPrint,
-		Size:  5,
+		Label:        "Search Results",
+		Items:        toPrint,
+		Size:         SIZE,
+		HideHelp:     true,
+		HideSelected: true,
 	}
 
-	_, result, err := prompt.Run()
+	var selectedNum = 0
+	for {
+		scroll := selectedNum - 1
+		if scroll < 0 {
+			scroll = 0
+		}
+		_, result, err := prompt.RunCursorAt(selectedNum, scroll)
 
-	if err != nil {
-		fmt.Printf("Prompt failed %v\n", err)
+		if err != nil {
+			fmt.Printf("Prompt failed %v\n", err)
+		}
+		if result == "" {
+			os.Exit(0)
+		}
+
+		selectedNum, _ = strconv.Atoi(strings.Split(result, " ")[0])
+
+		v.commandShow(selectedNum)
 	}
-
-	selectedNum, _ := strconv.Atoi(strings.Split(result, " ")[0])
-
-	v.commandShow(selectedNum)
-
-	//cw := colwriter.New(4)
-	//cw.Headers = true && !v.NoHeader
-	//cw.Colors = []ansi.COLOR{ansi.MAGENTA, ansi.BLUE, ansi.GREEN, ansi.DEFAULT}
-	//cw.Padding = []colwriter.PaddingFunc{colwriter.PadLeft, colwriter.PadRight, colwriter.PadLeft, colwriter.PadNone}
-	//cw.UseLess = !v.NoLess
-	//cw.Trim = []bool{false, false, false, true}
-	//
-	//cw.Open()
-	//cw.Write(toPrint)
-	//cw.Close()
 
 	return false
 }
@@ -675,32 +677,27 @@ func (v *vgrep) commandPrintMatches(indices []int, searchWord string) bool {
 func (v *vgrep) createPrintMessages(indices []int, searchWord string) []string {
 	var toPrint []string
 
-	isVscode := isVscode()
 	for _, i := range indices {
-		if isVscode {
-			// If we're running inside a vscode terminal, append the line to the
-			// file path, so we can quick jump to the specific location.  Note
-			// that dancing around with the indexes below is intentional - ugly
-			// but fast.
-			//toPrint = append(toPrint, []string{v.matches[i][0], v.matches[i][1] + ":" + v.matches[i][2], v.matches[i][2], v.matches[i][3]})
-		} else {
-			var index, file, line, content = v.matches[i][0], v.matches[i][1], v.matches[i][2], v.matches[i][3]
-			var DIFF = 20
-			re := regexp.MustCompile(searchWord)
-			matchLocations := re.FindAllIndex([]byte(v.matches[i][3]), -1)
-			for _, location := range matchLocations {
-				var before, after = location[0]-DIFF, location[1]+DIFF
-				if location[0]-DIFF < 0 {
-					before = 0
-				}
-				if location[1]+DIFF >= len(content) {
-					after = len(content) - 1
-				}
-				limitedContent := content[before:after]
-				toPrint = append(toPrint, index+" "+file+":"+line+" "+limitedContent)
+		var index, file, line, content = v.matches[i][0], v.matches[i][1], v.matches[i][2], v.matches[i][3]
+
+		const RANGE = 20
+
+		re := regexp.MustCompile(searchWord)
+		matchLocations := re.FindAllIndex([]byte(v.matches[i][3]), -1)
+
+		for _, location := range matchLocations {
+			var before, after = location[0] - RANGE, location[1] + RANGE
+			if location[0]-RANGE < 0 {
+				before = 0
 			}
+			if location[1]+RANGE >= len(content) {
+				after = len(content) - 1
+			}
+			limitedContent := content[before:after]
+			toPrint = append(toPrint, index+" "+file+":"+line+" "+limitedContent)
 		}
 	}
+
 	return toPrint
 }
 
