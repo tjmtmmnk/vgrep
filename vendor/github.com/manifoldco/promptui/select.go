@@ -51,6 +51,8 @@ type Select struct {
 	// https://godoc.org/github.com/chzyer/readline#Config for more information on readline.
 	IsVimMode bool
 
+	HideLabel bool
+
 	// HideHelp sets whether to hide help information.
 	HideHelp bool
 
@@ -311,8 +313,10 @@ func (s *Select) innerRun(cursorPos, scroll int, top rune) (int, string, error) 
 			sb.Write(help)
 		}
 
-		label := render(s.Templates.label, s.Label)
-		sb.Write(label)
+		if !s.HideLabel {
+			label := render(s.Templates.label, s.Label)
+			sb.Write(label)
+		}
 
 		items, idx := s.list.Items()
 		last := len(items) - 1
