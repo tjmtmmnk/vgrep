@@ -639,7 +639,7 @@ func (v *vgrep) commandPrintMatches(indices []int, searchWord string) bool {
 		return false
 	}
 
-	const SIZE = 5
+	const SIZE = 10
 
 	toPrint = v.createPrintMessages(indices, searchWord)
 
@@ -657,16 +657,16 @@ func (v *vgrep) commandPrintMatches(indices []int, searchWord string) bool {
 		if scroll < 0 {
 			scroll = 0
 		}
-		_, result, err := prompt.RunCursorAt(selectedNum, scroll)
+		idx, _, err := prompt.RunCursorAt(selectedNum, scroll)
 
 		if err != nil {
 			fmt.Printf("Prompt failed %v\n", err)
 		}
-		if result == "" {
+		if idx == -100 {
 			os.Exit(0)
 		}
 
-		selectedNum, _ = strconv.Atoi(strings.Split(result, " ")[0])
+		selectedNum = idx
 
 		v.commandShow(selectedNum)
 	}
@@ -677,25 +677,22 @@ func (v *vgrep) commandPrintMatches(indices []int, searchWord string) bool {
 func (v *vgrep) createPrintMessages(indices []int, searchWord string) []string {
 	var toPrint []string
 
+	const RANGE = 50
+
 	for _, i := range indices {
 		var index, file, line, content = v.matches[i][0], v.matches[i][1], v.matches[i][2], v.matches[i][3]
 
-		const RANGE = 20
+		location := regexp.MustCompile(searchWord).FindIndex([]byte(content))
 
-		re := regexp.MustCompile(searchWord)
-		matchLocations := re.FindAllIndex([]byte(v.matches[i][3]), -1)
-
-		for _, location := range matchLocations {
-			var before, after = location[0] - RANGE, location[1] + RANGE
-			if location[0]-RANGE < 0 {
-				before = 0
-			}
-			if location[1]+RANGE >= len(content) {
-				after = len(content) - 1
-			}
-			limitedContent := content[before:after]
-			toPrint = append(toPrint, index+" "+file+":"+line+" "+limitedContent)
+		var before, after = location[0] - RANGE, location[1] + RANGE
+		if before < 0 {
+			before = 0
 		}
+		if after >= len(content) {
+			after = len(content) - 1
+		}
+		limitedContent := content[before:after]
+		toPrint = append(toPrint, index+" "+file+":"+line+" "+limitedContent)
 	}
 
 	return toPrint
