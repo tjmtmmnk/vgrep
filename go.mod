@@ -10,6 +10,6 @@ require (
 	golang.org/x/sys v0.0.0-20191218084908-4a24b4065292 // indirect
 )
 
-replace github.com/manifoldco/promptui => github.com/tjmtmmnk/promptui v0.7.1-0.20200425185457-7386bb60a304
+replace github.com/manifoldco/promptui => github.com/tjmtmmnk/promptui v0.7.1-0.20200426054525-ec80abed659c
 
 go 1.13

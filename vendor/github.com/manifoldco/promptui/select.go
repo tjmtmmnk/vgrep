@@ -16,7 +16,10 @@ import (
 // SelectedAdd is used internally inside SelectWithAdd when the add option is selected in select mode.
 // Since -1 is not a possible selected index, this ensure that add mode is always unique inside
 // SelectWithAdd's logic.
-const SelectedAdd = -1
+const (
+	SelectedAdd = -1
+	Quit        = -100
+)
 
 // Select represents a list of items used to enable selections, they can be used as search engines, menus
 // or as a list of items in a cli based prompt.
@@ -253,6 +256,7 @@ func (s *Select) innerRun(cursorPos, scroll int, top rune) (int, string, error) 
 	s.list.SetCursor(cursorPos)
 	s.list.SetStart(scroll)
 
+	isQuit := false
 	c.SetListener(func(line []rune, pos int, key rune) ([]rune, int, bool) {
 		switch {
 		case key == KeyEnter:
@@ -288,6 +292,10 @@ func (s *Select) innerRun(cursorPos, scroll int, top rune) (int, string, error) 
 			s.list.PageUp()
 		case key == s.Keys.PageDown.Code || (key == 'l' && !searchMode):
 			s.list.PageDown()
+		case key == 'q':
+			isQuit = true
+			defer rl.Close()
+			defer rl.Write([]byte(showCursor))
 		default:
 			if canSearch && searchMode {
 				cur.Update(string(line))
@@ -354,8 +362,10 @@ func (s *Select) innerRun(cursorPos, scroll int, top rune) (int, string, error) 
 	})
 
 	for {
+		if isQuit {
+			return Quit, "", nil
+		}
 		_, err = rl.Readline()
-
 		if err != nil {
 			switch {
 			case err == readline.ErrInterrupt, err.Error() == "Interrupt":
@@ -370,9 +380,11 @@ func (s *Select) innerRun(cursorPos, scroll int, top rune) (int, string, error) 
 		if idx != list.NotFound {
 			break
 		}
-
 	}
 
+	if isQuit {
+		return Quit, "", nil
+	}
 	if err != nil {
 		if err.Error() == "Interrupt" {
 			err = ErrInterrupt
@@ -550,6 +562,9 @@ func (sa *SelectWithAdd) Run() (int, string, error) {
 		}
 
 		selected, value, err := s.innerRun(1, 0, '+')
+		if selected == Quit {
+			return 0, "", nil
+		}
 		if err != nil || selected != 0 {
 			return selected - 1, value, err
 		}
