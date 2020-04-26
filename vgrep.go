@@ -54,17 +54,21 @@ var version string
 
 func main() {
 	var (
-		err        error
-		v          vgrep
-		searchWord string
+		err error
+		v   vgrep
 	)
 
 	// Unknown flags will be ignored and stored in args to further pass them
 	// to (git) grep.
 	parser := flags.NewParser(&v, flags.Default|flags.IgnoreUnknown)
 	args, err := parser.ParseArgs(os.Args[1:])
-	if len(args) > 0 {
-		searchWord = args[0]
+
+	searchWord := ""
+	if len(args) == 1 {
+		isWord := regexp.MustCompile(`^\w+$`).Match([]byte(args[0]))
+		if isWord {
+			searchWord = args[0]
+		}
 	}
 
 	if err != nil {
@@ -107,6 +111,7 @@ func main() {
 			os.Exit(1)
 		}
 	} else {
+		fmt.Println(args)
 		v.waiter.Add(1)
 		v.grep(args)
 		v.cacheWrite() // this runs in the background
@@ -126,7 +131,8 @@ func main() {
 
 	// Last resort, print all matches.
 	if len(v.matches) > 0 {
-		v.commandPrintMatches([]int{}, searchWord)
+		toPrint := v.createPrintMessages([]int{}, searchWord)
+		v.commandPrintMatches(toPrint)
 	}
 
 	v.waiter.Wait()
@@ -217,7 +223,7 @@ func (v *vgrep) grep(args []string) {
 	} else if usegit {
 		env = "HOME="
 		cmd = []string{
-			"git", "-c", "color.grep.match=red bold",
+			"git", "-c", "color.grep.match=red",
 			"grep", "-z", "-In", "--color=always",
 		}
 		cmd = append(cmd, args...)
@@ -590,7 +596,8 @@ func (v *vgrep) dispatchCommand(input string) bool {
 	}
 
 	if command == "p" || command == "print" {
-		return v.commandPrintMatches(indices, input)
+		toPrint := v.createPrintMessages([]int{}, "")
+		return v.commandPrintMatches(toPrint)
 	}
 
 	if command == "q" || command == "quit" {
@@ -629,24 +636,13 @@ func (v *vgrep) commandPrintHelp() bool {
 // commandPrintMatches prints all matches specified in indices using less(1) or
 // stdout in case v.NoLess is specified. If indices is empty all matches
 // are printed.
-func (v *vgrep) commandPrintMatches(indices []int, searchWord string) bool {
-	var toPrint []string
-	var err error
-
-	indices, err = v.checkIndices(indices)
-	if err != nil {
-		fmt.Printf("%v\n", err)
-		return false
-	}
-
+func (v *vgrep) commandPrintMatches(toPrint []string) bool {
 	const SIZE = 10
 
-	toPrint = v.createPrintMessages(indices, searchWord)
-
 	prompt := promptui.Select{
-		Label:        "Search Results",
 		Items:        toPrint,
 		Size:         SIZE,
+		HideLabel:    true,
 		HideHelp:     true,
 		HideSelected: true,
 	}
@@ -675,27 +671,42 @@ func (v *vgrep) commandPrintMatches(indices []int, searchWord string) bool {
 }
 
 func (v *vgrep) createPrintMessages(indices []int, searchWord string) []string {
-	var toPrint []string
+	var (
+		printMessages []string
+		err           error
+	)
+
+	indices, err = v.checkIndices(indices)
+	if err != nil {
+		fmt.Printf("%v\n", err)
+		return []string{""}
+	}
 
 	const RANGE = 50
 
 	for _, i := range indices {
 		var index, file, line, content = v.matches[i][0], v.matches[i][1], v.matches[i][2], v.matches[i][3]
 
-		location := regexp.MustCompile(searchWord).FindIndex([]byte(content))
+		if searchWord == "" {
+			printMessages = append(printMessages, index+" "+file+":"+line+" "+content)
+		} else {
+			location := regexp.MustCompile(searchWord).FindIndex([]byte(content))
 
-		var before, after = location[0] - RANGE, location[1] + RANGE
-		if before < 0 {
-			before = 0
+			if location != nil {
+				var before, after = location[0] - RANGE, location[1] + RANGE
+				if before < 0 {
+					before = 0
+				}
+				if after >= len(content) {
+					after = len(content) - 1
+				}
+				limitedContent := content[before:after]
+				printMessages = append(printMessages, index+" "+file+":"+line+" "+limitedContent)
+			}
 		}
-		if after >= len(content) {
-			after = len(content) - 1
-		}
-		limitedContent := content[before:after]
-		toPrint = append(toPrint, index+" "+file+":"+line+" "+limitedContent)
 	}
 
-	return toPrint
+	return printMessages
 }
 
 // getContextLines return numLines context lines before and after the match at
