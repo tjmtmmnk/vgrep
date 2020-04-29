@@ -684,7 +684,7 @@ func (v *vgrep) createPrintMessages(indices []int) []string {
 			end = len(content) - 1
 		}
 		limitedContent := content[start:end]
-		printMessages = append(printMessages, index+" "+file+":"+line+" "+limitedContent)
+		printMessages = append(printMessages, "\x1b[0m\x1b[35m"+index+"\x1b[0m "+file+":"+line+" "+limitedContent)
 	}
 
 	return printMessages
