@@ -63,14 +63,6 @@ func main() {
 	parser := flags.NewParser(&v, flags.Default|flags.IgnoreUnknown)
 	args, err := parser.ParseArgs(os.Args[1:])
 
-	searchWord := ""
-	if len(args) == 1 {
-		isWord := regexp.MustCompile(`^\w+$`).Match([]byte(args[0]))
-		if isWord {
-			searchWord = args[0]
-		}
-	}
-
 	if err != nil {
 		os.Exit(1)
 	}
@@ -111,7 +103,6 @@ func main() {
 			os.Exit(1)
 		}
 	} else {
-		fmt.Println(args)
 		v.waiter.Add(1)
 		v.grep(args)
 		v.cacheWrite() // this runs in the background
@@ -131,7 +122,7 @@ func main() {
 
 	// Last resort, print all matches.
 	if len(v.matches) > 0 {
-		toPrint := v.createPrintMessages([]int{}, searchWord)
+		toPrint := v.createPrintMessages([]int{})
 		v.commandPrintMatches(toPrint)
 	}
 
@@ -596,7 +587,7 @@ func (v *vgrep) dispatchCommand(input string) bool {
 	}
 
 	if command == "p" || command == "print" {
-		toPrint := v.createPrintMessages([]int{}, "")
+		toPrint := v.createPrintMessages([]int{})
 		return v.commandPrintMatches(toPrint)
 	}
 
@@ -670,7 +661,7 @@ func (v *vgrep) commandPrintMatches(toPrint []string) bool {
 	return false
 }
 
-func (v *vgrep) createPrintMessages(indices []int, searchWord string) []string {
+func (v *vgrep) createPrintMessages(indices []int) []string {
 	var (
 		printMessages []string
 		err           error
@@ -682,28 +673,18 @@ func (v *vgrep) createPrintMessages(indices []int, searchWord string) []string {
 		return []string{""}
 	}
 
-	const RANGE = 50
+	const RANGE = 100
 
 	for _, i := range indices {
 		var index, file, line, content = v.matches[i][0], v.matches[i][1], v.matches[i][2], v.matches[i][3]
+		start := 0
+		end := RANGE
 
-		if searchWord == "" {
-			printMessages = append(printMessages, index+" "+file+":"+line+" "+content)
-		} else {
-			location := regexp.MustCompile(searchWord).FindIndex([]byte(content))
-
-			if location != nil {
-				var before, after = location[0] - RANGE, location[1] + RANGE
-				if before < 0 {
-					before = 0
-				}
-				if after >= len(content) {
-					after = len(content) - 1
-				}
-				limitedContent := content[before:after]
-				printMessages = append(printMessages, index+" "+file+":"+line+" "+limitedContent)
-			}
+		if end >= len(content) {
+			end = len(content) - 1
 		}
+		limitedContent := content[start:end]
+		printMessages = append(printMessages, index+" "+file+":"+line+" "+limitedContent)
 	}
 
 	return printMessages
