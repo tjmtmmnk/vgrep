@@ -26,6 +26,7 @@ import (
 	"github.com/sirupsen/logrus"
 	"github.com/vrothberg/vgrep/internal/ansi"
 	"github.com/vrothberg/vgrep/internal/colwriter"
+	"github.com/manifoldco/promptui"
 )
 
 // cliArgs passed to go-flags
@@ -33,6 +34,7 @@ type cliArgs struct {
 	Debug       bool   `short:"d" long:"debug" description:"Verbose debug logging"`
 	Interactive bool   `long:"interactive" description:"Enter interactive shell"`
 	NoGit       bool   `long:"no-git" description:"Use grep instead of git-grep"`
+	NoRipgrep   bool   `long:"no-ripgrep" description:"Do not use ripgrep"`
 	NoHeader    bool   `long:"no-header" description:"Do not print pretty headers"`
 	NoLess      bool   `long:"no-less" description:"Use stdout instead of less"`
 	Show        string `short:"s" long:"show" description:"Show specified matches or open shell" value-name:"SELECTORS"`
@@ -60,6 +62,7 @@ func main() {
 	// to (git) grep.
 	parser := flags.NewParser(&v, flags.Default|flags.IgnoreUnknown)
 	args, err := parser.ParseArgs(os.Args[1:])
+
 	if err != nil {
 		os.Exit(1)
 	}
@@ -119,7 +122,8 @@ func main() {
 
 	// Last resort, print all matches.
 	if len(v.matches) > 0 {
-		v.commandPrintMatches([]int{})
+		toPrint := v.createPrintMessages([]int{})
+		v.commandPrintMatches(toPrint)
 	}
 
 	v.waiter.Wait()
@@ -170,6 +174,22 @@ func (v *vgrep) insideGitTree() bool {
 	return inside
 }
 
+// ripgrepInstalled returns true if ripgrep is installed
+func (v *vgrep) ripgrepInstalled() bool {
+	out, err := exec.LookPath("rg")
+	if err != nil {
+		logrus.Debug("error checking if ripgrep is installed")
+	}
+	installed := false
+
+	if len(out) > 0 {
+		installed = true
+	}
+
+	logrus.Debugf("ripgrepInstalled() -> %v", installed)
+	return installed
+}
+
 // isVscode checks if the terminal is running inside of vscode.
 func isVscode() bool {
 	return os.Getenv("TERM_PROGRAM") == "vscode"
@@ -181,12 +201,20 @@ func (v *vgrep) grep(args []string) {
 	var usegit bool
 	var env string
 
+	useripgrep := v.ripgrepInstalled() && !v.NoRipgrep
 	usegit = v.insideGitTree() && !v.NoGit
 
-	if usegit {
+	if useripgrep {
+		cmd = []string{
+			"rg", "-0", "--colors=path:none", "--colors=line:none",
+			"--color=always", "--no-heading", "--line-number",
+		}
+		cmd = append(cmd, args...)
+		cmd = append(cmd, ".")
+	} else if usegit {
 		env = "HOME="
 		cmd = []string{
-			"git", "-c", "color.grep.match=red bold",
+			"git", "-c", "color.grep.match=red",
 			"grep", "-z", "-In", "--color=always",
 		}
 		cmd = append(cmd, args...)
@@ -205,7 +233,7 @@ func (v *vgrep) grep(args []string) {
 	v.matches = make([][]string, len(output))
 
 	for i, m := range output {
-		file, line, content := v.splitMatch(m, usegit)
+		file, line, content := v.splitMatch(m, usegit, useripgrep)
 		v.matches[i] = make([]string, 4)
 		v.matches[i][0] = strconv.Itoa(i)
 		v.matches[i][1] = file
@@ -218,9 +246,13 @@ func (v *vgrep) grep(args []string) {
 
 // splitMatch splits match into its file, line and content.  The format of
 // match varies depending if it has been produced by grep or git-grep.
-func (v *vgrep) splitMatch(match string, gitgrep bool) (file, line, content string) {
+func (v *vgrep) splitMatch(match string, gitgrep bool, ripgrep bool) (file, line, content string) {
+	if ripgrep {
+		// remove default color ansi escape codes from ripgrep's output
+		match = strings.Replace(match, "\x1b[0m", "", 4)
+	}
 	spl := bytes.SplitN([]byte(match), []byte{0}, 3)
-	if gitgrep {
+	if gitgrep && !ripgrep {
 		return string(spl[0]), string(spl[1]), string(spl[2])
 	}
 	// the 2nd separator of grep is ":"
@@ -555,7 +587,8 @@ func (v *vgrep) dispatchCommand(input string) bool {
 	}
 
 	if command == "p" || command == "print" {
-		return v.commandPrintMatches(indices)
+		toPrint := v.createPrintMessages([]int{})
+		return v.commandPrintMatches(toPrint)
 	}
 
 	if command == "q" || command == "quit" {
@@ -594,45 +627,67 @@ func (v *vgrep) commandPrintHelp() bool {
 // commandPrintMatches prints all matches specified in indices using less(1) or
 // stdout in case v.NoLess is specified. If indices is empty all matches
 // are printed.
-func (v *vgrep) commandPrintMatches(indices []int) bool {
-	var toPrint [][]string
-	var err error
+func (v *vgrep) commandPrintMatches(toPrint []string) bool {
+	const SIZE = 10
+
+	prompt := promptui.Select{
+		Items:        toPrint,
+		Size:         SIZE,
+		HideLabel:    true,
+		HideHelp:     true,
+		HideSelected: true,
+	}
+
+	var selectedNum = 0
+	for {
+		scroll := selectedNum - 1
+		if scroll < 0 {
+			scroll = 0
+		}
+		idx, _, err := prompt.RunCursorAt(selectedNum, scroll)
+
+		if err != nil {
+			fmt.Printf("Prompt failed %v\n", err)
+		}
+		if idx == -100 {
+			os.Exit(0)
+		}
+
+		selectedNum = idx
+
+		v.commandShow(selectedNum)
+	}
+
+	return false
+}
+
+func (v *vgrep) createPrintMessages(indices []int) []string {
+	var (
+		printMessages []string
+		err           error
+	)
 
 	indices, err = v.checkIndices(indices)
 	if err != nil {
 		fmt.Printf("%v\n", err)
-		return false
+		return []string{""}
 	}
 
-	if !v.NoHeader {
-		toPrint = append(toPrint, []string{"Index", "File", "Line", "Content"})
-	}
+	const RANGE = 100
 
-	isVscode := isVscode()
 	for _, i := range indices {
-		if isVscode {
-			// If we're running inside a vscode terminal, append the line to the
-			// file path, so we can quick jump to the specific location.  Note
-			// that dancing around with the indexes below is intentional - ugly
-			// but fast.
-			toPrint = append(toPrint, []string{v.matches[i][0], v.matches[i][1] + ":" + v.matches[i][2], v.matches[i][2], v.matches[i][3]})
-		} else {
-			toPrint = append(toPrint, v.matches[i])
+		var index, file, line, content = v.matches[i][0], v.matches[i][1], v.matches[i][2], v.matches[i][3]
+		start := 0
+		end := RANGE
+
+		if end >= len(content) {
+			end = len(content) - 1
 		}
+		limitedContent := content[start:end]
+		printMessages = append(printMessages, "\x1b[0m\x1b[35m"+index+"\x1b[0m "+file+":"+line+" "+limitedContent)
 	}
 
-	cw := colwriter.New(4)
-	cw.Headers = true && !v.NoHeader
-	cw.Colors = []ansi.COLOR{ansi.MAGENTA, ansi.BLUE, ansi.GREEN, ansi.DEFAULT}
-	cw.Padding = []colwriter.PaddingFunc{colwriter.PadLeft, colwriter.PadRight, colwriter.PadLeft, colwriter.PadNone}
-	cw.UseLess = !v.NoLess
-	cw.Trim = []bool{false, false, false, true}
-
-	cw.Open()
-	cw.Write(toPrint)
-	cw.Close()
-
-	return false
+	return printMessages
 }
 
 // getContextLines return numLines context lines before and after the match at
